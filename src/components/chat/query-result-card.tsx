@@ -68,7 +68,7 @@ export function QueryResultCard({ run, index, total }: QueryResultCardProps) {
         <div className="border-t border-border">
           {/* SQL */}
           <div className="relative">
-            <pre className="p-3 text-xs font-mono bg-muted/40 overflow-x-auto leading-relaxed whitespace-pre-wrap break-all">
+            <pre className="p-3 text-xs font-sans bg-muted/40 overflow-x-auto leading-relaxed whitespace-pre-wrap break-all">
               {run.sql_text}
             </pre>
             <button
@@ -114,7 +114,7 @@ export function QueryResultCard({ run, index, total }: QueryResultCardProps) {
                         {columns.map((c) => (
                           <td
                             key={`${idx}-${c}`}
-                            className="px-3 py-1.5 whitespace-nowrap font-mono tabular-nums"
+                            className="px-3 py-1.5 whitespace-nowrap font-sans tabular-nums"
                           >
                             {String(
                               (row as Record<string, unknown>)[c] ?? ""
@@ -167,7 +167,7 @@ export function LiveQueryCard({
         <span>{label}</span>
       </div>
       <div className="border-t border-border">
-        <pre className="p-3 text-xs font-mono bg-muted/40 overflow-x-auto leading-relaxed whitespace-pre-wrap break-all">
+        <pre className="p-3 text-xs font-sans bg-muted/40 overflow-x-auto leading-relaxed whitespace-pre-wrap break-all">
           {sqlText}
         </pre>
         {columns.length > 0 && rowsPreview.length > 0 && (
@@ -199,7 +199,7 @@ export function LiveQueryCard({
                       {columns.map((c) => (
                         <td
                           key={`${idx}-${c}`}
-                          className="px-3 py-1.5 whitespace-nowrap font-mono tabular-nums"
+                          className="px-3 py-1.5 whitespace-nowrap font-sans tabular-nums"
                         >
                           {String(row[c] ?? "")}
                         </td>

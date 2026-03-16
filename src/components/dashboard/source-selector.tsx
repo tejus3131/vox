@@ -100,7 +100,7 @@ function SourceCard({
               </Button>
             </div>
           ) : (
-            <h3 className="font-heading font-semibold text-lg tracking-tight truncate leading-tight">
+            <h3 className="font-semibold text-lg tracking-tight truncate leading-tight">
               {source.name}
             </h3>
           )}
@@ -221,7 +221,7 @@ export function SourceSelector({ initialSources }: Props) {
           <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
             <Database className="h-4 w-4 text-primary-foreground" />
           </div>
-          <span className="font-heading font-bold text-xl tracking-tight">Vox</span>
+          <span className="font-bold text-xl tracking-tight">Vox</span>
         </div>
         <form action="/auth/logout" method="POST">
           <Button
@@ -239,7 +239,7 @@ export function SourceSelector({ initialSources }: Props) {
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
           <div className="space-y-1">
-            <h1 className="text-2xl sm:text-3xl font-bold font-heading tracking-tight">
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
               Your Databases
             </h1>
             <p className="text-sm sm:text-[15px] text-muted-foreground">
@@ -262,7 +262,7 @@ export function SourceSelector({ initialSources }: Props) {
               <Database className="h-8 w-8 text-muted-foreground" />
             </div>
             <div className="space-y-1">
-              <h2 className="font-heading font-semibold text-lg">
+              <h2 className="font-semibold text-lg">
                 No databases connected
               </h2>
               <p className="text-[15px] text-muted-foreground max-w-sm">

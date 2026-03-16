@@ -23,7 +23,7 @@ function FeatureCard({
       <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
         {icon}
       </div>
-      <h3 className="font-heading font-bold text-lg tracking-tight">{title}</h3>
+      <h3 className="font-bold text-lg tracking-tight">{title}</h3>
       <p className="text-[15px] text-muted-foreground leading-relaxed">
         {description}
       </p>
@@ -43,7 +43,7 @@ function LandingPage() {
             <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
               <Database className="h-4 w-4 text-primary-foreground" />
             </div>
-            <span className="font-heading font-bold text-xl tracking-tight">Vox</span>
+            <span className="font-bold text-xl tracking-tight">Vox</span>
           </div>
           <Link
             href="/auth/github"
@@ -62,7 +62,7 @@ function LandingPage() {
             AI-powered database queries
           </div>
 
-          <h1 className="animate-in-delay-1 font-heading font-extrabold text-4xl sm:text-5xl md:text-6xl lg:text-7xl tracking-tight leading-[1.1]">
+          <h1 className="animate-in-delay-1 font-extrabold text-4xl sm:text-5xl md:text-6xl lg:text-7xl tracking-tight leading-[1.1]">
             Ask Your{" "}
             <span className="gradient-text">Database</span>
             <br />

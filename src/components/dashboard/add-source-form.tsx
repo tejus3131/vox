@@ -76,7 +76,7 @@ export function AddSourceForm({ onCreated, onCancel }: Props) {
         className="relative w-full max-w-lg rounded-2xl border border-border bg-card p-5 sm:p-6 space-y-4 sm:space-y-5 shadow-xl animate-in max-h-[90dvh] overflow-y-auto"
       >
         <div className="flex items-center justify-between">
-          <h2 className="font-heading font-semibold text-lg">
+          <h2 className="font-semibold text-lg">
             Connect Database
           </h2>
           <Button

@@ -5,10 +5,10 @@ export default function NotFound() {
   return (
     <div className="min-h-dvh flex items-center justify-center bg-background px-4 gradient-mesh">
       <div className="text-center space-y-5 animate-in">
-        <p className="text-8xl sm:text-9xl font-heading font-extrabold gradient-text tracking-tighter leading-none">
+        <p className="text-8xl sm:text-9xl font-extrabold gradient-text tracking-tighter leading-none">
           404
         </p>
-        <h1 className="text-xl font-heading font-semibold">
+        <h1 className="text-xl font-semibold">
           Page not found
         </h1>
         <p className="text-sm text-muted-foreground max-w-sm mx-auto">

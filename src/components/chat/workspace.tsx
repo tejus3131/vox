@@ -377,7 +377,7 @@ export function Workspace({
               <div className="h-12 w-12 sm:h-14 sm:w-14 rounded-2xl bg-primary/10 flex items-center justify-center">
                 <Database className="h-6 w-6 sm:h-7 sm:w-7 text-primary" />
               </div>
-              <h2 className="font-heading font-semibold text-lg sm:text-xl">
+              <h2 className="font-semibold text-lg sm:text-xl">
                 Ask about your data
               </h2>
               <p className="text-sm text-muted-foreground max-w-md">

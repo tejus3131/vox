@@ -1,23 +1,13 @@
 import type { Metadata, Viewport } from "next";
-import { Outfit, DM_Sans, JetBrains_Mono } from "next/font/google";
+import { Nunito } from "next/font/google";
+import { SpeedInsights } from "@vercel/speed-insights/next"
+import { Analytics } from "@vercel/analytics/next"
 import "./globals.css";
 
-const outfit = Outfit({
-  variable: "--font-heading",
+const nunito = Nunito({
+  variable: "--font-nunito",
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800"],
-});
-
-const dmSans = DM_Sans({
-  variable: "--font-body",
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  variable: "--font-mono",
-  subsets: ["latin"],
-  weight: ["400", "500"],
+  weight: ["300", "400", "500", "600", "700", "800"],
 });
 
 export const viewport: Viewport = {
@@ -39,11 +29,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark" suppressHydrationWarning>
-      <body
-        className={`${outfit.variable} ${dmSans.variable} ${jetbrainsMono.variable} antialiased`}
-      >
+    <html lang="en" className={`dark ${nunito.variable}`} suppressHydrationWarning>
+      <body className="antialiased">
+
         {children}
+        <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );
