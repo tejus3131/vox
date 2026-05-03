@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import type { QueryRun } from "@/types";
 import {
   ChevronDown,
@@ -40,6 +40,12 @@ export function QueryResultCard({ run, index, total }: QueryResultCardProps) {
     () => detectChartConfig(columns, rows),
     [columns, rows]
   );
+
+  useEffect(() => {
+    if (!chartConfig) return;
+    setOpen(true);
+    setViewMode("chart");
+  }, [chartConfig]);
 
   return (
     <div className="rounded-xl border border-border bg-card/50 overflow-hidden">

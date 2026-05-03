@@ -159,6 +159,25 @@ function sanitizeChatTitle(raw: string): string {
   return limited || "New Chat";
 }
 
+function isLowQualityTitle(candidate: string): boolean {
+  const normalized = candidate.toLowerCase().trim();
+  if (!normalized) return true;
+  if (normalized.split(/\s+/).length < 2) return true;
+  if (normalized.length > 60) return true;
+  if (normalized.startsWith("i ") || normalized.startsWith("sorry")) return true;
+  const refusalSignals = [
+    "dont have access",
+    "do not have access",
+    "cannot access",
+    "i cant",
+    "i can't",
+    "would you like",
+    "could you provide",
+    "share more",
+  ];
+  return refusalSignals.some((signal) => normalized.includes(signal));
+}
+
 function fallbackTitle(firstUserMessage: string): string {
   const cleaned = firstUserMessage
     .replace(/\r?\n/g, " ")
@@ -183,8 +202,11 @@ export async function generateChatTitle(firstUserMessage: string): Promise<strin
       { role: "system", content: "Generate a concise 3-6 word chat title. No punctuation. Never include lists or explanations." },
       { role: "user", content: firstUserMessage },
     ]);
-    const content = normalizeModelText(response.content);
-    return sanitizeChatTitle(content) || fallbackTitle(firstUserMessage);
+    const content = sanitizeChatTitle(normalizeModelText(response.content));
+    if (isLowQualityTitle(content)) {
+      return fallbackTitle(firstUserMessage);
+    }
+    return content;
   } catch {
     return fallbackTitle(firstUserMessage);
   }

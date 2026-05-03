@@ -38,7 +38,7 @@ function detectChartConfig(
   columns: string[],
   data: Record<string, unknown>[]
 ): ChartConfig | null {
-  if (data.length < 2 || columns.length < 2) return null;
+  if (data.length < 1 || columns.length < 2) return null;
 
   const toFiniteNumber = (value: unknown): number | null => {
     if (typeof value === "number") {
@@ -66,7 +66,7 @@ function detectChartConfig(
         numericCount += 1;
       }
     }
-    return numericCount >= 2 && invalidCount === 0;
+    return numericCount >= 1 && invalidCount === 0;
   });
 
   const categoryCols = columns.filter((col) => !numericCols.includes(col));
@@ -98,7 +98,7 @@ function detectChartConfig(
     })
     .filter((row): row is Record<string, unknown> => row !== null);
 
-  if (mappedData.length < 2) return null;
+  if (mappedData.length < 1) return null;
 
   return {
     chartType,

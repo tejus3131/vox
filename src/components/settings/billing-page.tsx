@@ -15,11 +15,19 @@ type BillingData = {
     trial_ends_at?: string | null;
   } | null;
   usage: Array<{ cost_paise: number; created_at: string }>;
+  payment_method: {
+    id: string;
+    type: string;
+    last4: string | null;
+    is_default: boolean;
+    created_at: string;
+  } | null;
   invoices: Array<{
     id: string;
     status: string;
-    amount_due_paise: number;
-    amount_paid_paise: number;
+    amount_due_paise?: number;
+    amount_paid_paise?: number;
+    total_paise?: number;
     period_start: string;
     period_end: string;
   }>;
@@ -91,12 +99,16 @@ export function BillingPage({ orgSlug, orgId }: Props) {
               <p className="text-sm text-muted-foreground">
                 Current tracked usage: INR {usageTotalRupees}
               </p>
-              <button
-                onClick={() => window.alert("Payment setup will be enabled through Razorpay checkout integration next.")}
-                className="h-9 px-4 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
-              >
-                Setup Payment Method
-              </button>
+              {data?.payment_method ? (
+                <p className="text-xs text-muted-foreground">
+                  Default payment method: {data.payment_method.type.toUpperCase()}
+                  {data.payment_method.last4 ? ` •••• ${data.payment_method.last4}` : ""}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Payment setup disabled for QA run (metering only mode).
+                </p>
+              )}
             </>
           )}
         </div>
@@ -120,7 +132,7 @@ export function BillingPage({ orgSlug, orgId }: Props) {
                     </td>
                     <td className="px-4 py-3 capitalize">{invoice.status}</td>
                     <td className="px-4 py-3 text-right">
-                      {(Number(invoice.amount_due_paise || 0) / 100).toFixed(2)}
+                      {(Number(invoice.amount_due_paise ?? invoice.total_paise ?? 0) / 100).toFixed(2)}
                     </td>
                   </tr>
                 ))}

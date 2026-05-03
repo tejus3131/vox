@@ -5,6 +5,52 @@ const COMPLETION_TOKEN_RATE = Number(process.env.COMPLETION_TOKEN_RATE_PAISE ?? 
 const TOOL_CALL_RATE = Number(process.env.TOOL_CALL_RATE_PAISE ?? "0.5");
 const BILLING_MARGIN = Number(process.env.BILLING_MARGIN ?? "0.4");
 const MIN_COST_PAISE = 1;
+const BILLING_ENFORCEMENT = process.env.BILLING_ENFORCEMENT === "true";
+
+export async function checkBillingAccess(orgId: string): Promise<{ blocked: boolean; reason?: string }> {
+  if (!BILLING_ENFORCEMENT) {
+    return { blocked: false };
+  }
+  const supabase = await createClient();
+  const { data: billing } = await supabase
+    .from("billing_accounts")
+    .select("status, trial_ends_at")
+    .eq("org_id", orgId)
+    .single();
+
+  if (!billing) return { blocked: false };
+
+  if (billing.status === "suspended") {
+    return { blocked: true, reason: "Billing account is suspended." };
+  }
+
+  const trialExpired =
+    billing.status === "trial" &&
+    new Date(billing.trial_ends_at) < new Date();
+
+  if (!trialExpired) return { blocked: false };
+
+  const { data: paymentMethod } = await supabase
+    .from("payment_methods")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("is_default", true)
+    .single();
+
+  if (!paymentMethod) {
+    return {
+      blocked: true,
+      reason: "Trial expired. Set up a default payment method to continue.",
+    };
+  }
+
+  await supabase
+    .from("billing_accounts")
+    .update({ status: "active" })
+    .eq("org_id", orgId);
+
+  return { blocked: false };
+}
 
 export function calculateCost(params: {
   promptTokens: number;
@@ -32,41 +78,12 @@ export async function recordUsage(params: {
   const costPaise = calculateCost(params);
   const idempotencyKey = `${params.messageId}:${params.attemptIndex}`;
 
-  const supabase = await createClient();
-
-  const { data: billing } = await supabase
-    .from("billing_accounts")
-    .select("status, trial_ends_at")
-    .eq("org_id", params.orgId)
-    .single();
-
-  if (billing) {
-    const trialExpired =
-      billing.status === "trial" &&
-      new Date(billing.trial_ends_at) < new Date();
-
-    if (trialExpired) {
-      const { data: paymentMethod } = await supabase
-        .from("payment_methods")
-        .select("id")
-        .eq("org_id", params.orgId)
-        .eq("is_default", true)
-        .single();
-
-      if (!paymentMethod) {
-        return { costPaise, blocked: true };
-      }
-
-      await supabase
-        .from("billing_accounts")
-        .update({ status: "active" })
-        .eq("org_id", params.orgId);
-    }
-
-    if (billing.status === "suspended") {
-      return { costPaise, blocked: true };
-    }
+  const gate = await checkBillingAccess(params.orgId);
+  if (gate.blocked) {
+    return { costPaise, blocked: true };
   }
+
+  const supabase = await createClient();
 
   await supabase.from("usage_ledger").upsert(
     {
