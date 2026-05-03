@@ -27,18 +27,78 @@ const EMPTY_FORM: SourceFormState = {
 interface Props {
   onCreated: (source: DataSource) => void;
   onCancel: () => void;
+  orgId?: string;
 }
 
-export function AddSourceForm({ onCreated, onCancel }: Props) {
+export function AddSourceForm({ onCreated, onCancel, orgId }: Props) {
   const [form, setForm] = useState<SourceFormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const set = (key: keyof SourceFormState) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setForm((p) => ({ ...p, [key]: e.target.value }));
+  const extractConnectionString = (input: string) => {
+    const trimmed = input.trim();
+    const matched = trimmed.match(/postgres(?:ql)?:\/\/\S+/i);
+    if (!matched?.[0]) {
+      throw new Error("Invalid PostgreSQL connection string");
+    }
+    return matched[0].replace(/[),.;]+$/, "");
+  };
+
+  const parseConnectionString = (input: string) => {
+    const connectionString = extractConnectionString(input);
+    const normalized = connectionString.startsWith("postgres://")
+      ? connectionString.replace("postgres://", "postgresql://")
+      : connectionString;
+    const url = new URL(normalized);
+    if (!["postgresql:", "postgres:"].includes(url.protocol)) {
+      throw new Error("Only PostgreSQL connection strings are supported");
+    }
+    const rawDb = url.pathname.replace(/^\/+/, "");
+    const database = decodeURIComponent(rawDb.split(/[/?#\s]/)[0] || "postgres");
+    return {
+      host: url.hostname,
+      port: url.port || "5432",
+      database,
+      username: decodeURIComponent(url.username),
+      password: decodeURIComponent(url.password),
+    };
+  };
+
+  const set = (key: keyof SourceFormState) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    if (key === "host" && value.includes("://")) {
+      try {
+        const parsed = parseConnectionString(value.trim());
+        setForm((p) => ({
+          ...p,
+          host: parsed.host,
+          port: parsed.port,
+          database: parsed.database,
+          username: parsed.username,
+          password: parsed.password,
+        }));
+        setError(null);
+        return;
+      } catch {
+        // Keep raw value if parsing fails; submit path will still validate.
+      }
+    }
+    setForm((p) => ({ ...p, [key]: value }));
+  };
 
   const canSubmit =
     form.name.trim() && form.host.trim() && form.database.trim() && form.username.trim();
+
+  const readError = (body: unknown): string => {
+    if (!body || typeof body !== "object") return "Failed to connect";
+    const obj = body as { error?: unknown; details?: unknown };
+    if (typeof obj.error === "string") return obj.error;
+    if (obj.error && typeof obj.error === "object") {
+      const msg = (obj.error as { message?: unknown }).message;
+      if (typeof msg === "string") return msg;
+    }
+    return "Failed to connect";
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,11 +109,11 @@ export function AddSourceForm({ onCreated, onCancel }: Props) {
       const res = await fetch("/api/data-sources", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, org_id: orgId }),
       });
       const body = await res.json();
       if (!res.ok)
-        throw new Error(body.error?.message || body.error || "Failed to connect");
+        throw new Error(readError(body));
       onCreated(body.data_source);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to connect");
@@ -100,7 +160,7 @@ export function AddSourceForm({ onCreated, onCancel }: Props) {
         <div className="grid grid-cols-1 sm:grid-cols-[1fr_100px] gap-3">
           <Input
             label="Host"
-            placeholder="db.example.com"
+            placeholder="db.example.com or paste full postgresql://... URI"
             value={form.host}
             onChange={set("host")}
           />

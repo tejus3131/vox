@@ -25,6 +25,7 @@ export interface DecryptedDataSource {
 export interface ChatSession {
   id: string;
   user_id: string;
+  org_id: string | null;
   data_source_id: string;
   title: string;
   archived: boolean;
@@ -46,6 +47,9 @@ export interface ChatMessage {
   token_usage: Record<string, unknown> | null;
   error: Record<string, unknown> | null;
   created_at: string;
+  parent_message_id?: string | null;
+  branch_index?: number;
+  is_active?: boolean;
 }
 
 export type QueryRunStatus = "ok" | "error" | "blocked" | "timeout";

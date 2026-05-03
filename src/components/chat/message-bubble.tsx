@@ -4,18 +4,20 @@ import type { ChatMessage, QueryRun } from "@/types";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { QueryResultCard } from "./query-result-card";
-import { User, Sparkles } from "lucide-react";
+import { User, Sparkles, ChevronLeft, ChevronRight } from "lucide-react";
 
 interface Props {
   message: ChatMessage;
   queryRuns?: QueryRun[];
+  branchInfo?: { current: number; total: number; onSwitch: (index: number) => void };
 }
 
-export function MessageBubble({ message, queryRuns }: Props) {
+export function MessageBubble({ message, queryRuns, branchInfo }: Props) {
   const isUser = message.role === "user";
+  const editing = false;
 
   return (
-    <div className={`flex gap-3 ${isUser ? "flex-row-reverse" : ""}`}>
+    <div className={`group flex gap-3 ${isUser ? "flex-row-reverse" : ""}`}>
       {/* Avatar */}
       <div
         className={`shrink-0 h-8 w-8 rounded-full flex items-center justify-center text-xs font-medium mt-0.5 ${
@@ -33,21 +35,53 @@ export function MessageBubble({ message, queryRuns }: Props) {
 
       {/* Content */}
       <div className={`flex flex-col gap-2 max-w-[90%] sm:max-w-[75%] min-w-0 ${isUser ? "items-end" : "items-start"}`}>
-        <div
-          className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
-            isUser
-              ? "bg-primary text-primary-foreground rounded-br-md"
-              : "bg-card border border-border rounded-bl-md"
-          }`}
-        >
-          {isUser ? (
-            <p className="whitespace-pre-wrap">{message.content}</p>
-          ) : (
-            <div className="prose-chat">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {message.content}
-              </ReactMarkdown>
-            </div>
+        {/* Branch navigation */}
+        {branchInfo && branchInfo.total > 1 && (
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <button
+              onClick={() => branchInfo.onSwitch(branchInfo.current - 1)}
+              disabled={branchInfo.current === 0}
+              className="p-0.5 rounded hover:bg-muted disabled:opacity-30 cursor-pointer"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+            <span className="tabular-nums">
+              {branchInfo.current + 1}/{branchInfo.total}
+            </span>
+            <button
+              onClick={() => branchInfo.onSwitch(branchInfo.current + 1)}
+              disabled={branchInfo.current === branchInfo.total - 1}
+              className="p-0.5 rounded hover:bg-muted disabled:opacity-30 cursor-pointer"
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
+        <div className="relative">
+          <div
+            className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+              isUser
+                ? "bg-primary text-primary-foreground rounded-br-md"
+                : "bg-card border border-border rounded-bl-md"
+            }`}
+          >
+            {isUser ? (
+              <p className="whitespace-pre-wrap">{message.content}</p>
+            ) : (
+              <div className="prose-chat">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {message.content}
+                </ReactMarkdown>
+              </div>
+            )}
+          </div>
+
+          {/* Edited indicator */}
+          {message.branch_index != null && message.branch_index > 0 && !editing && (
+            <span className="text-[10px] text-muted-foreground mt-0.5 block">
+              (edited)
+            </span>
           )}
         </div>
 

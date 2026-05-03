@@ -1,8 +1,10 @@
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
-import { SourceSelector } from "@/components/dashboard/source-selector";
-import type { DataSource } from "@/types";
-import { Database, Zap, BarChart3, Github, MessageSquare } from "lucide-react";
+import { auth } from "@/lib/auth";
+import { headers } from "next/headers";
+import { OrgSelector } from "@/components/dashboard/org-selector";
+import { redirect } from "next/navigation";
+import { getAccessState } from "@/lib/auth-access";
+import { Database, Zap, BarChart3, MessageSquare } from "lucide-react";
 
 function FeatureCard({
   icon,
@@ -37,7 +39,6 @@ function LandingPage() {
       <div className="absolute inset-0 gradient-mesh pointer-events-none" />
 
       <div className="relative z-10">
-        {/* Nav */}
         <header className="flex items-center justify-between px-6 md:px-10 py-5">
           <div className="flex items-center gap-2.5">
             <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
@@ -46,16 +47,14 @@ function LandingPage() {
             <span className="font-bold text-xl tracking-tight">Vox</span>
           </div>
           <Link
-            href="/auth/github"
+            href="/login"
             className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-secondary text-secondary-foreground text-sm font-medium
               hover:bg-secondary/80 transition-colors"
           >
-            <Github className="h-4 w-4" />
             Sign in
           </Link>
         </header>
 
-        {/* Hero */}
         <section className="flex flex-col items-center text-center px-6 pt-20 pb-24 md:pt-32 md:pb-32 max-w-4xl mx-auto">
           <div className="animate-in inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium mb-8">
             <Zap className="h-3 w-3" />
@@ -77,20 +76,18 @@ function LandingPage() {
 
           <div className="animate-in-delay-3 mt-10 flex flex-col sm:flex-row items-center gap-4">
             <Link
-              href="/auth/github"
+              href="/login"
               className="inline-flex items-center gap-2.5 h-12 px-7 rounded-xl bg-primary text-primary-foreground font-medium text-base
                 hover:bg-primary/90 active:bg-primary/80 transition-all shadow-lg shadow-primary/20"
             >
-              <Github className="h-5 w-5" />
-              Continue with GitHub
+              Get Started
             </Link>
             <span className="text-sm text-muted-foreground">
-              Free and open source
+              Free 30-day trial
             </span>
           </div>
         </section>
 
-        {/* Features */}
         <section className="px-6 md:px-10 pb-24 max-w-5xl mx-auto">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             <FeatureCard
@@ -119,20 +116,19 @@ function LandingPage() {
 }
 
 export default async function HomePage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const accessState = await getAccessState();
 
-  if (!user) {
+  if (!accessState) {
     return <LandingPage />;
   }
 
-  const { data } = await supabase
-    .from("data_sources")
-    .select("id, user_id, name, db_type, status, created_at, updated_at, last_tested_at")
-    .eq("user_id", user.id)
-    .order("updated_at", { ascending: false });
+  if (!accessState.emailVerified) {
+    redirect(`/verify-email?email=${encodeURIComponent(accessState.session.user.email)}`);
+  }
+  if (!accessState.mfaSatisfied) {
+    redirect("/mfa-setup");
+  }
 
-  return <SourceSelector initialSources={(data ?? []) as DataSource[]} />;
+  const orgs = await auth.api.listOrganizations({ headers: await headers() });
+  return <OrgSelector orgs={(orgs ?? []).map((o) => ({ id: o.id, name: o.name, slug: o.slug }))} />;
 }

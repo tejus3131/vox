@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 
-const REQUIRED_SCHEMA_VERSION = Number(process.env.REQUIRED_SCHEMA_VERSION ?? "2");
+const REQUIRED_SCHEMA_VERSION = Number(process.env.REQUIRED_SCHEMA_VERSION ?? "1");
 const QUERY_EXECUTION_ENABLED = process.env.QUERY_EXECUTION_ENABLED !== "false";
 
 export function isQueryExecutionEnabled(): boolean {
@@ -17,7 +17,6 @@ export async function ensureSchemaCompatibility() {
     .single();
 
   if (error || !data) {
-    // Fallback path: if app_meta is missing but rebuilt tables exist, treat as compatible.
     const probe = await supabase.from("data_sources").select("id").limit(1);
 
     if (!probe.error) {
@@ -30,7 +29,7 @@ export async function ensureSchemaCompatibility() {
         {
           error: "schema_meta_unavailable",
           message:
-            "Schema metadata unavailable. Run the latest migrations (including 00002_big_bang_rebuild.sql) and retry.",
+            "Schema metadata unavailable. Run the baseline migration (migrations/00001_init.sql) and retry.",
           hint: "Apply migrations, then refresh the app.",
         },
         { status: 503 }

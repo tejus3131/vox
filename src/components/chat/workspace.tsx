@@ -11,6 +11,7 @@ import { PanelLeft, Database } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface Props {
+  orgId: string;
   dbId: string;
   activeChatId: string | null;
   initialChats: ChatSession[];
@@ -28,6 +29,7 @@ type QueryAttemptUI = {
 type SendPhase = "idle" | "streaming" | "hydrating_messages";
 
 export function Workspace({
+  orgId,
   dbId,
   activeChatId,
   initialChats,
@@ -52,7 +54,10 @@ export function Workspace({
   const [liveQueryAttempts, setLiveQueryAttempts] = useState<QueryAttemptUI[]>(
     []
   );
+  const [sendError, setSendError] = useState<string | null>(null);
   const isStreaming = sendPhase !== "idle";
+  const routeFor = (chatId?: string | null) =>
+    chatId ? `/${orgId}/${dbId}/${chatId}` : `/${orgId}/${dbId}`;
 
   useEffect(() => {
     setLocalChatId(activeChatId);
@@ -70,17 +75,246 @@ export function Workspace({
     setChats((prev) => prev.filter((c) => c.id !== id));
     if (activeChatId === id || localChatId === id) {
       setLocalChatId(null);
-      router.push(`/${dbId}`);
+      router.push(routeFor());
+    }
+  };
+
+  const readSseStream = async (
+    response: Response,
+    requestId: string,
+    applyEvent: (event: StreamEvent) => void
+  ) => {
+    if (!response.body) return;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop() ?? "";
+      for (const frame of frames) {
+        const dataLines = frame
+          .split("\n")
+          .filter((line) => line.startsWith("data: "))
+          .map((line) => line.slice(6).trim())
+          .filter(Boolean);
+        if (dataLines.length === 0) continue;
+        const payload = dataLines.join("\n");
+        let event: StreamEvent;
+        try {
+          event = JSON.parse(payload) as StreamEvent;
+        } catch {
+          continue;
+        }
+        if (
+          event.request_id !== requestId ||
+          activeRequestIdRef.current !== requestId
+        ) {
+          continue;
+        }
+        applyEvent(event);
+      }
+    }
+  };
+
+  const hydrateChatState = async (
+    chatId: string,
+    streamedText: string,
+    terminalErrorMessage: string | null,
+    finalAssistantId: string | null
+  ) => {
+    setSendPhase("hydrating_messages");
+    const messagesRes = await fetch(`/api/chats/${chatId}/messages`);
+    if (messagesRes.ok) {
+      const body = await messagesRes.json();
+      setMessages(body.messages ?? []);
+      setQueryRunsByMessage(body.query_runs_by_message ?? {});
+      return true;
+    }
+
+    // Hydration failed: keep streamed response visible and preserve existing cards.
+    if (streamedText || finalAssistantId || terminalErrorMessage) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: finalAssistantId ?? `tmp-assistant-${Date.now()}`,
+          chat_session_id: chatId,
+          role: "assistant",
+          content: streamedText || "Query failed before a final answer was generated.",
+          status: terminalErrorMessage ? "error" : "completed",
+          model: null,
+          token_usage: null,
+          error: terminalErrorMessage ? { message: terminalErrorMessage } : null,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+    }
+    return false;
+  };
+
+  const refreshChats = async (requestId: string) => {
+    const chatsRes = await fetch(`/api/data-sources/${dbId}/chats`);
+    if (!chatsRes.ok) return;
+    const body = await chatsRes.json();
+    if (
+      activeRequestIdRef.current !== null &&
+      activeRequestIdRef.current !== requestId
+    ) {
+      return;
+    }
+    setChats(body.chat_sessions ?? []);
+  };
+
+  const runStreamFlow = async ({
+    requestId,
+    chatId,
+    request,
+    optimisticUserContent,
+  }: {
+    requestId: string;
+    chatId: string;
+    request: Promise<Response>;
+    optimisticUserContent?: string;
+  }) => {
+    setSendError(null);
+    if (optimisticUserContent) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `tmp-user-${Date.now()}`,
+          chat_session_id: chatId,
+          role: "user",
+          content: optimisticUserContent,
+          status: "completed",
+          model: null,
+          token_usage: null,
+          error: null,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+    }
+
+    const res = await request;
+    if (!res.ok || !res.body) {
+      let message = "Failed to send message.";
+      try {
+        const body = await res.json();
+        if (typeof body?.error === "string") message = body.error;
+      } catch {
+        // noop
+      }
+      throw new Error(message);
+    }
+
+    let finalAssistantId: string | null = null;
+    let streamedText = "";
+    let terminalErrorMessage: string | null = null;
+
+    await readSseStream(res, requestId, (event) => {
+      if (event.type === "title_updated") {
+        setChats((prev) =>
+          prev.map((c) =>
+            c.id === event.chat_session_id ? { ...c, title: event.title } : c
+          )
+        );
+        return;
+      }
+      if (event.type === "text") {
+        streamedText += event.delta;
+        setStreamText(streamedText);
+        return;
+      }
+      if (event.type === "sql") {
+        setLiveQueryAttempts((prev) => {
+          const existing = prev.find((a) => a.id === event.query_run_id);
+          if (existing) {
+            return prev.map((a) =>
+              a.id === event.query_run_id ? { ...a, sqlText: event.sql_text } : a
+            );
+          }
+          return [
+            ...prev,
+            {
+              id: event.query_run_id,
+              sqlText: event.sql_text,
+              rowsPreview: [],
+              columns: [],
+            },
+          ];
+        });
+        return;
+      }
+      if (event.type === "query_result_preview") {
+        setLiveQueryAttempts((prev) => {
+          const existing = prev.find((a) => a.id === event.query_run_id);
+          if (existing) {
+            return prev.map((a) =>
+              a.id === event.query_run_id
+                ? {
+                    ...a,
+                    rowsPreview: event.rows_preview,
+                    columns: event.columns,
+                  }
+                : a
+            );
+          }
+          return [
+            ...prev,
+            {
+              id: event.query_run_id,
+              sqlText: "",
+              rowsPreview: event.rows_preview,
+              columns: event.columns,
+            },
+          ];
+        });
+        return;
+      }
+      if (event.type === "done") {
+        finalAssistantId = event.assistant_message_id;
+        return;
+      }
+      if (event.type === "error") {
+        terminalErrorMessage = event.message;
+      }
+    });
+
+    const hydrated = await hydrateChatState(
+      chatId,
+      streamedText,
+      terminalErrorMessage,
+      finalAssistantId
+    );
+
+    if (!hydrated && terminalErrorMessage) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `tmp-assistant-error-${Date.now()}`,
+          chat_session_id: chatId,
+          role: "assistant",
+          content: "I ran into an error while processing your request.",
+          status: "error",
+          model: null,
+          token_usage: null,
+          error: { message: terminalErrorMessage },
+          created_at: new Date().toISOString(),
+        },
+      ]);
     }
   };
 
   const handleSend = async () => {
     if (sendInFlightRef.current) return;
-    const query = input.trim();
+    const rawInput = input;
+    const query = rawInput.trim();
     if (!query || isStreaming) return;
 
     sendInFlightRef.current = true;
     setInput("");
+    setSendError(null);
     setSendPhase("streaming");
     setStreamText("");
     setLiveQueryAttempts([]);
@@ -91,7 +325,6 @@ export function Workspace({
     try {
       let chatIdForSend = activeChatId ?? localChatId;
 
-      // Create chat if none exists
       if (!chatIdForSend) {
         const createRes = await fetch(`/api/data-sources/${dbId}/chats`, {
           method: "POST",
@@ -99,219 +332,49 @@ export function Workspace({
           body: JSON.stringify({ title: "New Chat" }),
         });
         if (!createRes.ok) {
-          setSendPhase("idle");
-          return;
+          let message = "Failed to create chat.";
+          try {
+            const body = await createRes.json();
+            if (typeof body?.error === "string") message = body.error;
+          } catch {
+            // noop
+          }
+          throw new Error(message);
         }
         const created = await createRes.json();
         const chatSession = created.chat_session as ChatSession | undefined;
-        if (!chatSession) {
-          setSendPhase("idle");
-          return;
-        }
+        if (!chatSession) throw new Error("chat_create_missing_session");
         chatIdForSend = chatSession.id;
         setLocalChatId(chatSession.id);
         setChats((prev) =>
-          prev.some((c) => c.id === chatSession.id)
-            ? prev
-            : [chatSession, ...prev]
+          prev.some((c) => c.id === chatSession.id) ? prev : [chatSession, ...prev]
         );
         if (typeof window !== "undefined") {
-          window.history.replaceState(
-            null,
-            "",
-            `/${dbId}/${chatSession.id}`
-          );
+          window.history.replaceState(null, "", routeFor(chatSession.id));
         }
       }
 
-      // Optimistic user message
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `tmp-user-${Date.now()}`,
-          chat_session_id: chatIdForSend ?? "pending",
-          role: "user",
-          content: query,
-          status: "completed",
-          model: null,
-          token_usage: null,
-          error: null,
-          created_at: new Date().toISOString(),
-        },
-      ]);
-
-      const res = await fetch(`/api/chats/${chatIdForSend}/query`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, request_id: requestId }),
+      await runStreamFlow({
+        requestId,
+        chatId: chatIdForSend,
+        request: fetch(`/api/chats/${chatIdForSend}/query`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query, request_id: requestId }),
+        }),
+        optimisticUserContent: query,
       });
 
-      if (!res.ok || !res.body) {
-        setSendPhase("idle");
-        return;
-      }
-
-      const resolvedChatId = chatIdForSend;
-      let finalAssistantId: string | null = null;
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let streamedText = "";
-      let terminalErrorMessage: string | null = null;
-
-      // SSE read loop
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const text = decoder.decode(value, { stream: true });
-        for (const line of text.split("\n")) {
-          if (!line.startsWith("data: ")) continue;
-          const payload = line.slice(6).trim();
-          if (!payload) continue;
-          let event: StreamEvent;
-          try {
-            event = JSON.parse(payload) as StreamEvent;
-          } catch {
-            continue;
-          }
-          if (
-            event.request_id !== requestId ||
-            activeRequestIdRef.current !== requestId
-          )
-            continue;
-
-          if (event.type === "title_updated") {
-            setChats((prev) =>
-              prev.map((c) =>
-                c.id === event.chat_session_id
-                  ? { ...c, title: event.title }
-                  : c
-              )
-            );
-          } else if (event.type === "text") {
-            streamedText += event.delta;
-            setStreamText(streamedText);
-          } else if (event.type === "sql") {
-            setLiveQueryAttempts((prev) => {
-              const existing = prev.find((a) => a.id === event.query_run_id);
-              if (existing) {
-                return prev.map((a) =>
-                  a.id === event.query_run_id
-                    ? { ...a, sqlText: event.sql_text }
-                    : a
-                );
-              }
-              return [
-                ...prev,
-                {
-                  id: event.query_run_id,
-                  sqlText: event.sql_text,
-                  rowsPreview: [],
-                  columns: [],
-                },
-              ];
-            });
-          } else if (event.type === "query_result_preview") {
-            setLiveQueryAttempts((prev) => {
-              const existing = prev.find((a) => a.id === event.query_run_id);
-              if (existing) {
-                return prev.map((a) =>
-                  a.id === event.query_run_id
-                    ? {
-                        ...a,
-                        rowsPreview: event.rows_preview,
-                        columns: event.columns,
-                      }
-                    : a
-                );
-              }
-              return [
-                ...prev,
-                {
-                  id: event.query_run_id,
-                  sqlText: "",
-                  rowsPreview: event.rows_preview,
-                  columns: event.columns,
-                },
-              ];
-            });
-          } else if (event.type === "done") {
-            finalAssistantId = event.assistant_message_id;
-          } else if (event.type === "error") {
-            terminalErrorMessage = event.message;
-          }
-        }
-      }
-
-      // Hydrate messages from server after stream completes
-      if (resolvedChatId) {
-        setSendPhase("hydrating_messages");
-        const messagesRes = await fetch(
-          `/api/chats/${resolvedChatId}/messages`
-        );
-        if (messagesRes.ok) {
-          const body = await messagesRes.json();
-          setMessages(body.messages ?? []);
-          setQueryRunsByMessage(body.query_runs_by_message ?? {});
-          setLiveQueryAttempts([]);
-        } else if (finalAssistantId) {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: finalAssistantId,
-              chat_session_id: resolvedChatId,
-              role: "assistant",
-              content: streamedText,
-              status: terminalErrorMessage ? "error" : "completed",
-              model: null,
-              token_usage: null,
-              error: terminalErrorMessage
-                ? { message: terminalErrorMessage }
-                : null,
-              created_at: new Date().toISOString(),
-            },
-          ]);
-        }
-
-        setStreamText("");
-        setSendPhase("idle");
-
-        // Refresh chat list in background
-        void (async () => {
-          const chatsRes = await fetch(`/api/data-sources/${dbId}/chats`);
-          if (!chatsRes.ok) return;
-          const body = await chatsRes.json();
-          if (
-            activeRequestIdRef.current !== null &&
-            activeRequestIdRef.current !== requestId
-          )
-            return;
-          setChats(body.chat_sessions ?? []);
-        })();
-      } else if (finalAssistantId) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: finalAssistantId,
-            chat_session_id: activeChatId ?? "pending",
-            role: "assistant",
-            content: streamedText,
-            status: "completed",
-            model: null,
-            token_usage: null,
-            error: null,
-            created_at: new Date().toISOString(),
-          },
-        ]);
-        setSendPhase("idle");
-        setStreamText("");
-      } else {
-        setSendPhase("idle");
-        setStreamText("");
-      }
-    } catch {
+      setStreamText("");
+      setLiveQueryAttempts([]);
+      setSendPhase("idle");
+      void refreshChats(requestId);
+    } catch (error) {
       setSendPhase("idle");
       setStreamText("");
       setLiveQueryAttempts([]);
+      setInput(rawInput);
+      setSendError(error instanceof Error ? error.message : "Failed to send message.");
     } finally {
       if (activeRequestIdRef.current === requestId) {
         activeRequestIdRef.current = null;
@@ -333,6 +396,7 @@ export function Workspace({
       )}
 
       <ChatSidebar
+        orgId={orgId}
         dbId={dbId}
         chats={chats}
         activeChatId={activeChatId ?? localChatId}
@@ -340,9 +404,9 @@ export function Workspace({
           setLocalChatId(null);
           setMessages([]);
           setQueryRunsByMessage({});
-          router.push(`/${dbId}`);
+          router.push(routeFor());
         }}
-        onSelectChat={(id) => router.push(`/${dbId}/${id}`)}
+        onSelectChat={(id) => router.push(routeFor(id))}
         onDeleteChat={removeChat}
         open={sidebarOpen}
         onToggle={() => setSidebarOpen((v) => !v)}
@@ -417,6 +481,11 @@ export function Workspace({
         </div>
 
         {/* Input */}
+        {sendError && (
+          <div className="px-4 py-2 text-xs text-destructive border-t border-border bg-destructive/5">
+            {sendError}
+          </div>
+        )}
         <MessageInput
           value={input}
           onChange={setInput}

@@ -17,6 +17,65 @@ export async function getDataSourceById(supabase: SupabaseClient, userId: string
     .single();
 }
 
+export async function getDataSourceAccessibleByUser(
+  supabase: SupabaseClient,
+  userId: string,
+  id: string
+): Promise<{ data: Record<string, unknown> | null; error: Error | null }> {
+  const sourceResp = await supabase
+    .from("data_sources")
+    .select("*")
+    .eq("id", id)
+    .single();
+
+  if (sourceResp.error || !sourceResp.data) {
+    return {
+      data: null,
+      error: new Error(sourceResp.error?.message ?? "Data source not found"),
+    };
+  }
+
+  const source = sourceResp.data as Record<string, unknown>;
+  if (String(source.user_id ?? "") === userId) {
+    return { data: source, error: null };
+  }
+
+  const orgId = typeof source.org_id === "string" ? source.org_id : null;
+  if (!orgId) {
+    return { data: null, error: new Error("Data source not found") };
+  }
+
+  const memberResp = await supabase
+    .from("member")
+    .select("role")
+    .eq("organizationId", orgId)
+    .eq("userId", userId)
+    .single();
+
+  if (memberResp.error || !memberResp.data) {
+    return { data: null, error: new Error("Data source not found") };
+  }
+
+  const role = String((memberResp.data as { role?: unknown }).role ?? "");
+  if (role === "owner" || role === "admin") {
+    return { data: source, error: null };
+  }
+
+  const accessResp = await supabase
+    .from("data_source_access")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("user_id", userId)
+    .eq("data_source_id", id)
+    .single();
+
+  if (accessResp.error || !accessResp.data) {
+    return { data: null, error: new Error("Data source not found") };
+  }
+
+  return { data: source, error: null };
+}
+
 export async function insertDataSource(
   supabase: SupabaseClient,
   payload: Record<string, unknown>
@@ -46,15 +105,21 @@ export async function deleteDataSource(supabase: SupabaseClient, userId: string,
 export async function listChatSessions(
   supabase: SupabaseClient,
   userId: string,
-  dataSourceId: string
+  dataSourceId: string,
+  orgId?: string | null
 ) {
-  return supabase
+  let query = supabase
     .from("chat_sessions")
-    .select("id, user_id, data_source_id, title, archived, last_message_at, created_at, updated_at")
+    .select("id, user_id, org_id, data_source_id, title, archived, last_message_at, created_at, updated_at")
     .eq("user_id", userId)
     .eq("data_source_id", dataSourceId)
     .eq("archived", false)
     .order("last_message_at", { ascending: false });
+
+  if (orgId) {
+    query = query.eq("org_id", orgId);
+  }
+  return query;
 }
 
 export async function createChatSession(
@@ -105,6 +170,7 @@ export async function listChatMessages(
     .from("chat_messages")
     .select("*")
     .eq("chat_session_id", chatSessionId)
+    .eq("is_active", true)
     .order("created_at", { ascending: true })
     .limit(limit);
 }
@@ -118,6 +184,7 @@ export async function listRecentChatMessages(
     .from("chat_messages")
     .select("*")
     .eq("chat_session_id", chatSessionId)
+    .eq("is_active", true)
     .order("created_at", { ascending: false })
     .limit(limit);
 }

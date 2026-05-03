@@ -6,15 +6,17 @@ import {
   createChatMessage,
   createQueryRun,
   getChatSessionById,
-  getDataSourceById,
+  getDataSourceAccessibleByUser,
   listRecentChatMessages,
   touchChatSession,
   updateChatMessage,
   updateDataSource,
   updateChatSession,
 } from "@/lib/db/repositories";
-import type { SupabaseClient, User } from "@supabase/supabase-js";
-import { createSqlAgent, generateChatTitle } from "./agent";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+type User = { id: string; email: string };
+import { createSqlAgent, generateChatTitle, prepareUserMessage } from "./agent";
 import { introspectSchema } from "@/lib/db/schema-introspection";
 import { isQueryExecutionEnabled } from "@/lib/app-runtime";
 
@@ -111,7 +113,7 @@ async function resolveContext(
   if (chatResp.error || !chatResp.data) {
     throw new Error("Chat not found");
   }
-  const sourceResp = await getDataSourceById(
+  const sourceResp = await getDataSourceAccessibleByUser(
     supabase,
     user.id,
     String(chatResp.data.data_source_id)
@@ -141,6 +143,8 @@ export async function runQuery(
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const send = makeEventSender(controller);
+      let pendingAssistantId: string | null = null;
+      let chatIdForError: string | null = null;
       try {
         const userMessage = await createChatMessage(supabase, {
           chat_session_id: context.chatId,
@@ -165,20 +169,30 @@ export async function runQuery(
         if (pendingAssistant.error || !pendingAssistant.data) {
           throw new Error("Failed to pre-create assistant message");
         }
+        pendingAssistantId = String(pendingAssistant.data.id);
+        chatIdForError = context.chatId;
 
         const historyResp = await listRecentChatMessages(supabase, context.chatId, 24);
         const history = (historyResp.data ?? [])
           .reverse()
           .map((msg) => ({
             role: msg.role === "assistant" ? "assistant" : "user",
-            content: msg.content,
+            content:
+              msg.role === "assistant"
+                ? msg.content
+                : prepareUserMessage(String(msg.content ?? "")),
           }));
 
         const agent = createSqlAgent(
           context.source,
           async () => await introspectSchema(context.source)
         );
-        const result = await agent.invoke({ messages: [...history, { role: "user", content: input.query.trim() }] });
+        const result = await agent.invoke({
+          messages: [
+            ...history,
+            { role: "user", content: prepareUserMessage(input.query.trim()) },
+          ],
+        });
         const messages = Array.isArray((result as { messages?: unknown[] }).messages)
           ? ((result as { messages: unknown[] }).messages)
           : [];
@@ -272,6 +286,19 @@ export async function runQuery(
         // `done` is terminal: no additional events after this point.
         controller.close();
       } catch (error) {
+        if (pendingAssistantId) {
+          await updateChatMessage(supabase, pendingAssistantId, {
+            status: "error",
+            content: "I ran into an error while processing your request.",
+            error: {
+              code: "query_failed",
+              message: error instanceof Error ? error.message : "Query failed",
+            },
+          });
+          if (chatIdForError) {
+            await touchChatSession(supabase, chatIdForError);
+          }
+        }
         send({
           type: "error",
           request_id: requestId,
