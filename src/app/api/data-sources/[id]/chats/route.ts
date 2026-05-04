@@ -4,7 +4,7 @@ import { ensureSchemaCompatibility } from "@/lib/app-runtime";
 import { requireUser } from "@/lib/api/auth";
 import {
   createChatSession,
-  getDataSourceById,
+  getDataSourceAccessibleByUser,
   listChatSessions,
 } from "@/lib/db/repositories";
 
@@ -23,12 +23,13 @@ export async function GET(
   if (!user) return unauthorized!;
   const { id } = await params;
 
-  const source = await getDataSourceById(supabase, user.id, id);
+  const source = await getDataSourceAccessibleByUser(supabase, user.id, id);
   if (source.error || !source.data) {
     return NextResponse.json({ error: "Data source not found" }, { status: 404 });
   }
 
-  const { data, error } = await listChatSessions(supabase, user.id, id);
+  const orgId = typeof source.data.org_id === "string" ? source.data.org_id : null;
+  const { data, error } = await listChatSessions(supabase, user.id, id, orgId);
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
@@ -47,7 +48,7 @@ export async function POST(
   if (!user) return unauthorized!;
   const { id } = await params;
 
-  const source = await getDataSourceById(supabase, user.id, id);
+  const source = await getDataSourceAccessibleByUser(supabase, user.id, id);
   if (source.error || !source.data) {
     return NextResponse.json({ error: "Data source not found" }, { status: 404 });
   }
@@ -59,6 +60,7 @@ export async function POST(
 
   const { data, error } = await createChatSession(supabase, {
     user_id: user.id,
+    org_id: source.data.org_id ?? null,
     data_source_id: id,
     title: parsed.data.title ?? "New Chat",
     archived: false,

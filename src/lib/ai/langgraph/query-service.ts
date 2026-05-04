@@ -6,17 +6,20 @@ import {
   createChatMessage,
   createQueryRun,
   getChatSessionById,
-  getDataSourceById,
+  getDataSourceAccessibleByUser,
   listRecentChatMessages,
   touchChatSession,
   updateChatMessage,
   updateDataSource,
   updateChatSession,
 } from "@/lib/db/repositories";
-import type { SupabaseClient, User } from "@supabase/supabase-js";
-import { createSqlAgent, generateChatTitle } from "./agent";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+type User = { id: string; email: string };
+import { createSqlAgent, generateChatTitle, prepareUserMessage } from "./agent";
 import { introspectSchema } from "@/lib/db/schema-introspection";
 import { isQueryExecutionEnabled } from "@/lib/app-runtime";
+import { checkBillingAccess, recordUsage } from "@/lib/billing/usage-meter";
 
 type QueryRouteInput =
   { chatId: string; query: string; requestId?: string };
@@ -51,8 +54,23 @@ function parseAgentOutput(messages: unknown[]) {
       tool_calls?: Array<{ name?: string; args?: Record<string, unknown> }>;
       name?: string;
     };
-    if (typed.type === "ai" && typeof typed.content === "string") {
-      answerText = typed.content || answerText;
+    if (typed.type === "ai") {
+      if (typeof typed.content === "string") {
+        answerText = typed.content || answerText;
+      } else if (Array.isArray(typed.content)) {
+        const merged = typed.content
+          .map((part) => {
+            if (typeof part === "string") return part;
+            if (part && typeof part === "object" && "text" in part) {
+              const text = (part as { text?: unknown }).text;
+              return typeof text === "string" ? text : "";
+            }
+            return "";
+          })
+          .join(" ")
+          .trim();
+        if (merged) answerText = merged;
+      }
     }
     if (typed.tool_calls?.length) {
       for (const call of typed.tool_calls) {
@@ -88,6 +106,79 @@ function parseAgentOutput(messages: unknown[]) {
   return { attempts, answerText };
 }
 
+function parseUsage(messages: unknown[]): {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  toolCalls: number;
+} {
+  const readNumber = (obj: Record<string, unknown>, keys: string[]) => {
+    for (const key of keys) {
+      const value = obj[key];
+      const numeric = typeof value === "number" ? value : Number(value);
+      if (Number.isFinite(numeric) && numeric > 0) return numeric;
+    }
+    return 0;
+  };
+
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let totalTokens = 0;
+  let toolCalls = 0;
+
+  for (const msg of messages) {
+    if (!msg || typeof msg !== "object") continue;
+    const typed = msg as {
+      type?: string;
+      tool_calls?: Array<unknown>;
+      usage_metadata?: Record<string, unknown>;
+      response_metadata?: Record<string, unknown>;
+      additional_kwargs?: Record<string, unknown>;
+    };
+
+    if (typed.type === "ai") {
+      toolCalls += typed.tool_calls?.length ?? 0;
+    }
+
+    const usageSources: Array<Record<string, unknown>> = [];
+    if (typed.usage_metadata) usageSources.push(typed.usage_metadata);
+    if (typed.response_metadata && typeof typed.response_metadata === "object") {
+      const tokenUsage = typed.response_metadata.tokenUsage;
+      const usage = typed.response_metadata.usage;
+      if (tokenUsage && typeof tokenUsage === "object") {
+        usageSources.push(tokenUsage as Record<string, unknown>);
+      }
+      if (usage && typeof usage === "object") {
+        usageSources.push(usage as Record<string, unknown>);
+      }
+    }
+    if (typed.additional_kwargs?.usage && typeof typed.additional_kwargs.usage === "object") {
+      usageSources.push(typed.additional_kwargs.usage as Record<string, unknown>);
+    }
+
+    for (const usage of usageSources) {
+      promptTokens = Math.max(
+        promptTokens,
+        readNumber(usage, ["input_tokens", "prompt_tokens", "promptTokens"])
+      );
+      completionTokens = Math.max(
+        completionTokens,
+        readNumber(usage, ["output_tokens", "completion_tokens", "completionTokens"])
+      );
+      totalTokens = Math.max(
+        totalTokens,
+        readNumber(usage, ["total_tokens", "totalTokens"])
+      );
+    }
+  }
+
+  if (!totalTokens) {
+    totalTokens = promptTokens + completionTokens;
+  }
+
+  return { promptTokens, completionTokens, totalTokens, toolCalls };
+}
+
 function makeEventSender(controller: ReadableStreamDefaultController<Uint8Array>) {
   const enc = new TextEncoder();
   let sequence = 0;
@@ -111,7 +202,7 @@ async function resolveContext(
   if (chatResp.error || !chatResp.data) {
     throw new Error("Chat not found");
   }
-  const sourceResp = await getDataSourceById(
+  const sourceResp = await getDataSourceAccessibleByUser(
     supabase,
     user.id,
     String(chatResp.data.data_source_id)
@@ -122,6 +213,8 @@ async function resolveContext(
   return {
     chatId: String(chatResp.data.id),
     dataSourceId: String(sourceResp.data.id),
+    orgId:
+      typeof chatResp.data.org_id === "string" ? String(chatResp.data.org_id) : null,
     source: mapSourceRowToDecrypted(sourceResp.data as Record<string, unknown>),
   };
 }
@@ -141,6 +234,8 @@ export async function runQuery(
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const send = makeEventSender(controller);
+      let pendingAssistantId: string | null = null;
+      let chatIdForError: string | null = null;
       try {
         const userMessage = await createChatMessage(supabase, {
           chat_session_id: context.chatId,
@@ -165,24 +260,44 @@ export async function runQuery(
         if (pendingAssistant.error || !pendingAssistant.data) {
           throw new Error("Failed to pre-create assistant message");
         }
+        pendingAssistantId = String(pendingAssistant.data.id);
+        chatIdForError = context.chatId;
+
+        if (context.orgId) {
+          const billingGate = await checkBillingAccess(context.orgId);
+          if (billingGate.blocked) {
+            throw new Error(
+              billingGate.reason ?? "Billing setup required before continuing."
+            );
+          }
+        }
 
         const historyResp = await listRecentChatMessages(supabase, context.chatId, 24);
         const history = (historyResp.data ?? [])
           .reverse()
           .map((msg) => ({
             role: msg.role === "assistant" ? "assistant" : "user",
-            content: msg.content,
+            content:
+              msg.role === "assistant"
+                ? msg.content
+                : prepareUserMessage(String(msg.content ?? "")),
           }));
 
         const agent = createSqlAgent(
           context.source,
           async () => await introspectSchema(context.source)
         );
-        const result = await agent.invoke({ messages: [...history, { role: "user", content: input.query.trim() }] });
+        const result = await agent.invoke({
+          messages: [
+            ...history,
+            { role: "user", content: prepareUserMessage(input.query.trim()) },
+          ],
+        });
         const messages = Array.isArray((result as { messages?: unknown[] }).messages)
           ? ((result as { messages: unknown[] }).messages)
           : [];
         const { attempts, answerText } = parseAgentOutput(messages);
+        const usage = parseUsage(messages);
 
         // Event ordering contract for clients:
         // 1) each SQL attempt emits `sql` then `query_result_preview`
@@ -234,9 +349,34 @@ export async function runQuery(
         const finalized = await updateChatMessage(supabase, String(pendingAssistant.data.id), {
           content: finalAnswer,
           status: "completed",
+          prompt_tokens: usage.promptTokens,
+          completion_tokens: usage.completionTokens,
+          total_tokens: usage.totalTokens,
+          tool_call_count: usage.toolCalls,
+          token_usage: {
+            prompt_tokens: usage.promptTokens,
+            completion_tokens: usage.completionTokens,
+            total_tokens: usage.totalTokens,
+            tool_call_count: usage.toolCalls,
+          },
         });
         if (finalized.error || !finalized.data) {
           throw new Error("Failed to finalize assistant message");
+        }
+
+        if (context.orgId) {
+          const usageRecord = await recordUsage({
+            orgId: context.orgId,
+            userId: user.id,
+            messageId: String(finalized.data.id),
+            attemptIndex: 0,
+            toolCalls: usage.toolCalls,
+            promptTokens: usage.promptTokens,
+            completionTokens: usage.completionTokens,
+          });
+          if (usageRecord.blocked) {
+            throw new Error("Billing setup required before sending more messages.");
+          }
         }
 
         await touchChatSession(supabase, context.chatId);
@@ -272,6 +412,19 @@ export async function runQuery(
         // `done` is terminal: no additional events after this point.
         controller.close();
       } catch (error) {
+        if (pendingAssistantId) {
+          await updateChatMessage(supabase, pendingAssistantId, {
+            status: "error",
+            content: "I ran into an error while processing your request.",
+            error: {
+              code: "query_failed",
+              message: error instanceof Error ? error.message : "Query failed",
+            },
+          });
+          if (chatIdForError) {
+            await touchChatSession(supabase, chatIdForError);
+          }
+        }
         send({
           type: "error",
           request_id: requestId,

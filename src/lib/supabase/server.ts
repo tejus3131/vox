@@ -1,27 +1,24 @@
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 
 export async function createClient() {
-  const cookieStore = await cookies();
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
-            );
-          } catch {
-            // Ignored in Server Components -- middleware handles cookie writes
-          }
-        },
-      },
-    }
+  if (!supabaseUrl) {
+    throw new Error("NEXT_PUBLIC_SUPABASE_URL is required.");
+  }
+
+  if (!supabaseKey) {
+    throw new Error(
+      "Supabase key missing. Set SUPABASE_SERVICE_ROLE_KEY or NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY."
+    );
+  }
+
+  return createSupabaseClient(
+    supabaseUrl,
+    supabaseKey,
   );
 }

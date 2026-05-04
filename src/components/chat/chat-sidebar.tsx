@@ -27,6 +27,7 @@ function timeAgo(dateStr: string): string {
 }
 
 interface Props {
+  orgId: string;
   dbId: string;
   chats: ChatSession[];
   activeChatId: string | null;
@@ -38,6 +39,7 @@ interface Props {
 }
 
 export function ChatSidebar({
+  orgId,
   dbId,
   chats,
   activeChatId,
@@ -70,7 +72,7 @@ export function ChatSidebar({
         {/* Header */}
         <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
           <button
-            onClick={() => router.push("/")}
+            onClick={() => router.push(`/${orgId}`)}
             className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
           >
             <ArrowLeft className="h-4 w-4" />
@@ -180,16 +182,18 @@ export function ChatSidebar({
 
         {/* Logout */}
         <div className="px-3 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] border-t border-border">
-          <form action="/auth/logout" method="POST">
-            <Button
-              type="submit"
-              variant="ghost"
-              className="w-full justify-start text-muted-foreground hover:text-foreground"
-              leftIcon={<LogOut className="h-4 w-4" />}
-            >
-              Sign out
-            </Button>
-          </form>
+          <Button
+            variant="ghost"
+            className="w-full justify-start text-muted-foreground hover:text-foreground"
+            leftIcon={<LogOut className="h-4 w-4" />}
+            onClick={async () => {
+              const { signOut } = await import("@/lib/auth-client");
+              await signOut();
+              window.location.href = "/";
+            }}
+          >
+            Sign out
+          </Button>
         </div>
       </div>
     </aside>

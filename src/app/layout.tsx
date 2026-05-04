@@ -1,7 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { Nunito } from "next/font/google";
-import { SpeedInsights } from "@vercel/speed-insights/next"
-import { Analytics } from "@vercel/analytics/next"
+import { SpeedInsights } from "@vercel/speed-insights/next";
+import { Analytics } from "@vercel/analytics/next";
+import { Providers } from "@/components/providers";
 import "./globals.css";
 
 const nunito = Nunito({
@@ -29,10 +30,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`dark ${nunito.variable}`} suppressHydrationWarning>
+    <html lang="en" className={nunito.variable} suppressHydrationWarning>
       <body className="antialiased">
-
-        {children}
+        <Providers>
+          {children}
+        </Providers>
         <Analytics />
         <SpeedInsights />
       </body>

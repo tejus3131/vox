@@ -1,14 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
 import type { QueryRun } from "@/types";
 import {
   ChevronDown,
   Code2,
   Table2,
+  BarChart3,
   Copy,
   Check,
 } from "lucide-react";
+import { DataTable } from "./data-table";
+import { ChartRenderer, detectChartConfig } from "./chart-renderer";
+
+type ViewMode = "table" | "chart";
 
 interface QueryResultCardProps {
   run: QueryRun;
@@ -19,6 +24,7 @@ interface QueryResultCardProps {
 export function QueryResultCard({ run, index, total }: QueryResultCardProps) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("table");
 
   const copySQL = async () => {
     await navigator.clipboard.writeText(run.sql_text);
@@ -27,13 +33,22 @@ export function QueryResultCard({ run, index, total }: QueryResultCardProps) {
   };
 
   const columns = run.columns ?? [];
-  const rows = run.rows_preview ?? [];
-  const label =
-    total > 1 ? `SQL Query #${index + 1}` : "SQL Query";
+  const rows = (run.rows_preview ?? []) as Record<string, unknown>[];
+  const label = total > 1 ? `SQL Query #${index + 1}` : "SQL Query";
+
+  const chartConfig = useMemo(
+    () => detectChartConfig(columns, rows),
+    [columns, rows]
+  );
+
+  useEffect(() => {
+    if (!chartConfig) return;
+    setOpen(true);
+    setViewMode("chart");
+  }, [chartConfig]);
 
   return (
     <div className="rounded-xl border border-border bg-card/50 overflow-hidden">
-      {/* Header */}
       <button
         className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium
           hover:bg-muted/50 transition-colors cursor-pointer"
@@ -68,7 +83,7 @@ export function QueryResultCard({ run, index, total }: QueryResultCardProps) {
         <div className="border-t border-border">
           {/* SQL */}
           <div className="relative">
-            <pre className="p-3 text-xs font-sans bg-muted/40 overflow-x-auto leading-relaxed whitespace-pre-wrap break-all">
+            <pre className="p-3 text-xs font-mono bg-muted/40 overflow-x-auto leading-relaxed whitespace-pre-wrap break-all">
               {run.sql_text}
             </pre>
             <button
@@ -84,47 +99,43 @@ export function QueryResultCard({ run, index, total }: QueryResultCardProps) {
             </button>
           </div>
 
-          {/* Results table */}
-          {columns.length > 0 && rows.length > 0 && (
+          {/* Results */}
+          {columns.length > 0 && (
             <div className="border-t border-border">
               <div className="flex items-center gap-2 px-4 py-2 text-xs text-muted-foreground">
                 <Table2 className="h-3.5 w-3.5" />
-                Result Preview
+                <span className="flex-1">Results</span>
+                {chartConfig && (
+                  <div className="flex items-center gap-0.5 rounded bg-muted p-0.5">
+                    <button
+                      onClick={() => setViewMode("table")}
+                      className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium cursor-pointer transition-all
+                        ${viewMode === "table" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                    >
+                      <Table2 className="h-3 w-3" />
+                      Table
+                    </button>
+                    <button
+                      onClick={() => setViewMode("chart")}
+                      className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium cursor-pointer transition-all
+                        ${viewMode === "chart" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                    >
+                      <BarChart3 className="h-3 w-3" />
+                      Chart
+                    </button>
+                  </div>
+                )}
               </div>
-              <div className="overflow-x-auto max-h-64">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="bg-muted/50">
-                      {columns.map((c) => (
-                        <th
-                          key={c}
-                          className="text-left px-3 py-2 font-medium text-muted-foreground whitespace-nowrap sticky top-0 bg-muted/50"
-                        >
-                          {c}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row, idx) => (
-                      <tr
-                        key={idx}
-                        className="border-t border-border hover:bg-muted/30 transition-colors"
-                      >
-                        {columns.map((c) => (
-                          <td
-                            key={`${idx}-${c}`}
-                            className="px-3 py-1.5 whitespace-nowrap font-sans tabular-nums"
-                          >
-                            {String(
-                              (row as Record<string, unknown>)[c] ?? ""
-                            )}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="pb-2">
+                {rows.length === 0 ? (
+                  <div className="px-4 py-6 text-xs text-muted-foreground">
+                    Query succeeded with 0 rows.
+                  </div>
+                ) : viewMode === "chart" && chartConfig ? (
+                  <ChartRenderer config={chartConfig} />
+                ) : (
+                  <DataTable columns={columns} data={rows} />
+                )}
               </div>
             </div>
           )}
@@ -157,8 +168,7 @@ export function LiveQueryCard({
   index,
   total,
 }: LiveQueryCardProps) {
-  const label =
-    total > 1 ? `SQL Query #${index + 1}` : "SQL Query";
+  const label = total > 1 ? `SQL Query #${index + 1}` : "SQL Query";
 
   return (
     <div className="rounded-xl border border-border bg-card/50 overflow-hidden">
@@ -167,48 +177,22 @@ export function LiveQueryCard({
         <span>{label}</span>
       </div>
       <div className="border-t border-border">
-        <pre className="p-3 text-xs font-sans bg-muted/40 overflow-x-auto leading-relaxed whitespace-pre-wrap break-all">
+        <pre className="p-3 text-xs font-mono bg-muted/40 overflow-x-auto leading-relaxed whitespace-pre-wrap break-all">
           {sqlText}
         </pre>
-        {columns.length > 0 && rowsPreview.length > 0 && (
-          <div className="border-t border-border">
+        {columns.length > 0 && (
+          <div className="border-t border-border pb-2">
             <div className="flex items-center gap-2 px-4 py-2 text-xs text-muted-foreground">
               <Table2 className="h-3.5 w-3.5" />
               Result Preview
             </div>
-            <div className="overflow-x-auto max-h-64">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="bg-muted/50">
-                    {columns.map((c) => (
-                      <th
-                        key={c}
-                        className="text-left px-3 py-2 font-medium text-muted-foreground whitespace-nowrap"
-                      >
-                        {c}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rowsPreview.map((row, idx) => (
-                    <tr
-                      key={idx}
-                      className="border-t border-border"
-                    >
-                      {columns.map((c) => (
-                        <td
-                          key={`${idx}-${c}`}
-                          className="px-3 py-1.5 whitespace-nowrap font-sans tabular-nums"
-                        >
-                          {String(row[c] ?? "")}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            {rowsPreview.length === 0 ? (
+              <div className="px-4 py-6 text-xs text-muted-foreground">
+                Query succeeded with 0 rows.
+              </div>
+            ) : (
+              <DataTable columns={columns} data={rowsPreview} />
+            )}
           </div>
         )}
       </div>

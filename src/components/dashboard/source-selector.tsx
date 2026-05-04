@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { DataSource } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -15,7 +16,10 @@ import {
   CircleDot,
   AlertTriangle,
   LogOut,
+  Settings,
+  UserRound,
 } from "lucide-react";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 function timeAgo(dateStr: string): string {
   const seconds = Math.floor(
@@ -32,6 +36,10 @@ function timeAgo(dateStr: string): string {
 
 interface Props {
   initialSources: DataSource[];
+  canManage?: boolean;
+  orgSlug?: string;
+  orgId?: string;
+  canAccessSettings?: boolean;
 }
 
 function SourceCard({
@@ -39,11 +47,13 @@ function SourceCard({
   onRename,
   onDelete,
   onClick,
+  canManage = true,
 }: {
   source: DataSource;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
   onClick: () => void;
+  canManage?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(source.name);
@@ -158,7 +168,7 @@ function SourceCard({
           <p className="text-xs text-muted-foreground">
             Press Enter to save, Escape to cancel
           </p>
-        ) : (
+        ) : canManage ? (
           <div className="flex items-center gap-2">
             <Button
               variant="ghost"
@@ -181,13 +191,23 @@ function SourceCard({
               Delete
             </Button>
           </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            Read-only access
+          </p>
         )}
       </div>
     </div>
   );
 }
 
-export function SourceSelector({ initialSources }: Props) {
+export function SourceSelector({
+  initialSources,
+  canManage = true,
+  orgSlug,
+  orgId,
+  canAccessSettings = true,
+}: Props) {
   const router = useRouter();
   const [sources, setSources] = useState<DataSource[]>(initialSources);
   const [showForm, setShowForm] = useState(false);
@@ -223,16 +243,51 @@ export function SourceSelector({ initialSources }: Props) {
           </div>
           <span className="font-bold text-xl tracking-tight">Vox</span>
         </div>
-        <form action="/auth/logout" method="POST">
+        <div className="flex items-center gap-3">
+          <ThemeToggle />
+          <Link href="/account">
+            <Button
+              variant="ghost"
+              size="sm"
+              leftIcon={<UserRound className="h-4 w-4" />}
+            >
+              Account
+            </Button>
+          </Link>
+          {orgSlug &&
+            (canAccessSettings ? (
+              <Link href={`/${orgSlug}/settings`}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  leftIcon={<Settings className="h-4 w-4" />}
+                >
+                  Settings
+                </Button>
+              </Link>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                leftIcon={<Settings className="h-4 w-4" />}
+                disabled
+              >
+                Settings
+              </Button>
+            ))}
           <Button
-            type="submit"
             variant="ghost"
             size="sm"
             leftIcon={<LogOut className="h-4 w-4" />}
+            onClick={async () => {
+              const { signOut } = await import("@/lib/auth-client");
+              await signOut();
+              window.location.href = "/";
+            }}
           >
             Sign out
           </Button>
-        </form>
+        </div>
       </header>
 
       <div className="mx-auto w-full max-w-4xl px-4 sm:px-6 py-6 sm:py-10 space-y-6 sm:space-y-8">
@@ -245,11 +300,17 @@ export function SourceSelector({ initialSources }: Props) {
             <p className="text-sm sm:text-[15px] text-muted-foreground">
               Connect PostgreSQL databases and start chatting with your data.
             </p>
+            {!canAccessSettings && (
+              <p className="text-xs text-muted-foreground">
+                Your role has limited access. Contact an org admin for settings changes.
+              </p>
+            )}
           </div>
           <Button
             leftIcon={<Plus className="h-4 w-4" />}
             onClick={() => setShowForm(true)}
             className="self-start sm:self-auto shrink-0"
+            disabled={!canManage}
           >
             Add Database
           </Button>
@@ -274,6 +335,7 @@ export function SourceSelector({ initialSources }: Props) {
               leftIcon={<Plus className="h-4 w-4" />}
               onClick={() => setShowForm(true)}
               className="mt-2"
+              disabled={!canManage}
             >
               Connect Database
             </Button>
@@ -289,7 +351,8 @@ export function SourceSelector({ initialSources }: Props) {
                 source={source}
                 onRename={renameSource}
                 onDelete={removeSource}
-                onClick={() => router.push(`/${source.id}`)}
+                canManage={canManage}
+                onClick={() => router.push(orgSlug ? `/${orgSlug}/${source.id}` : `/${source.id}`)}
               />
             ))}
           </div>
@@ -297,8 +360,9 @@ export function SourceSelector({ initialSources }: Props) {
       </div>
 
       {/* Add form modal */}
-      {showForm && (
+      {showForm && canManage && (
         <AddSourceForm
+          orgId={orgId}
           onCreated={(source) => {
             setSources((prev) => [source, ...prev]);
             setShowForm(false);
