@@ -16,6 +16,22 @@ function isStaticAsset(pathname: string): boolean {
   );
 }
 
+function hasBetterAuthSessionCookie(request: NextRequest): boolean {
+  return request.cookies
+    .getAll()
+    .some(
+      (cookie) =>
+        cookie.name === "better-auth.session_token" ||
+        cookie.name === "__Secure-better-auth.session_token" ||
+        cookie.name.startsWith("better-auth.session_token.") ||
+        cookie.name.startsWith("__Secure-better-auth.session_token.")
+    );
+}
+
+function isApiRoute(pathname: string): boolean {
+  return pathname.startsWith("/api/");
+}
+
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -27,8 +43,17 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const sessionCookie = request.cookies.get("better-auth.session_token");
-  if (!sessionCookie?.value) {
+  if (!hasBetterAuthSessionCookie(request)) {
+    if (isApiRoute(pathname)) {
+      return NextResponse.json(
+        {
+          error: "Unauthorized",
+          code: "session_required",
+          login: `/login?callbackUrl=${encodeURIComponent(pathname)}`,
+        },
+        { status: 401 }
+      );
+    }
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("callbackUrl", pathname);
     return NextResponse.redirect(loginUrl);
