@@ -136,8 +136,9 @@ export async function POST(request: Request) {
     password: body.password,
   };
 
+  let validatedSource = tempSource;
   try {
-    await testDataSourceConnection(tempSource);
+    validatedSource = await testDataSourceConnection(tempSource);
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Connection failed" },
@@ -150,11 +151,11 @@ export async function POST(request: Request) {
     org_id: body.org_id ?? null,
     name: body.name,
     db_type: "postgresql",
-    encrypted_host: encrypt(body.host),
-    encrypted_port: encrypt(body.port),
-    encrypted_database: encrypt(body.database),
-    encrypted_username: encrypt(body.username),
-    encrypted_password: encrypt(body.password),
+    encrypted_host: encrypt(validatedSource.host),
+    encrypted_port: encrypt(validatedSource.port),
+    encrypted_database: encrypt(validatedSource.database),
+    encrypted_username: encrypt(validatedSource.username),
+    encrypted_password: encrypt(validatedSource.password),
     status: "active",
     last_tested_at: new Date().toISOString(),
   };

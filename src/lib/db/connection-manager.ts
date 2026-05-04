@@ -51,8 +51,6 @@ function getPool(source: DecryptedDataSource): Pool {
     user: normalized.username,
     password: normalized.password,
     ssl: { rejectUnauthorized: false },
-    // pg supports forwarding net connection options; force IPv4 in serverless DNS environments.
-    ...( { family: 4 } as Record<string, unknown> ),
     max: 5,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
@@ -61,13 +59,41 @@ function getPool(source: DecryptedDataSource): Pool {
   return pool;
 }
 
-export async function testDataSourceConnection(source: DecryptedDataSource): Promise<void> {
+async function testWithSource(source: DecryptedDataSource): Promise<void> {
   const pool = getPool(source);
   const client = await pool.connect();
   try {
     await client.query("SELECT 1");
   } finally {
     client.release();
+  }
+}
+
+export async function testDataSourceConnection(
+  source: DecryptedDataSource
+): Promise<DecryptedDataSource> {
+  const normalized = normalizeSource(source);
+  try {
+    await testWithSource(normalized);
+    return normalized;
+  } catch (error) {
+    const canTrySupabaseSessionPooler =
+      normalized.host.endsWith(".pooler.supabase.com") &&
+      normalized.port === "6543";
+    if (!canTrySupabaseSessionPooler) {
+      throw error;
+    }
+
+    const sessionPoolerSource: DecryptedDataSource = {
+      ...normalized,
+      port: "5432",
+    };
+    try {
+      await testWithSource(sessionPoolerSource);
+      return sessionPoolerSource;
+    } catch {
+      throw error;
+    }
   }
 }
 
