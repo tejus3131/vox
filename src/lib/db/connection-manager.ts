@@ -1,5 +1,6 @@
 import type { DecryptedDataSource } from "@/types";
 import { Pool, type PoolClient, type QueryResult } from "pg";
+import { setDefaultResultOrder } from "node:dns";
 
 interface SqlPolicy {
   statementTimeoutMs: number;
@@ -11,24 +12,47 @@ const DEFAULT_POLICY: SqlPolicy = {
   rowCap: 200,
 };
 
+try {
+  // Keep prod DNS behavior consistent with local environments where IPv4 often resolves reliably.
+  setDefaultResultOrder("ipv4first");
+} catch {
+  // no-op for runtimes that do not support overriding DNS result order.
+}
+
 const pools = new Map<string, Pool>();
 
+function normalizeSource(source: DecryptedDataSource): DecryptedDataSource {
+  const clean = (value: string) => value.trim().replace(/^['"]|['"]$/g, "");
+  return {
+    ...source,
+    host: clean(source.host),
+    port: clean(source.port || "5432") || "5432",
+    database: clean(source.database),
+    username: clean(source.username),
+    password: source.password,
+  };
+}
+
 function keyForSource(source: DecryptedDataSource): string {
-  return `${source.host}:${source.port}:${source.database}:${source.username}`;
+  const s = normalizeSource(source);
+  return `${s.host}:${s.port}:${s.database}:${s.username}`;
 }
 
 function getPool(source: DecryptedDataSource): Pool {
+  const normalized = normalizeSource(source);
   const key = keyForSource(source);
   const existing = pools.get(key);
   if (existing) return existing;
 
   const pool = new Pool({
-    host: source.host,
-    port: Number(source.port || "5432"),
-    database: source.database,
-    user: source.username,
-    password: source.password,
+    host: normalized.host,
+    port: Number(normalized.port || "5432"),
+    database: normalized.database,
+    user: normalized.username,
+    password: normalized.password,
     ssl: { rejectUnauthorized: false },
+    // pg supports forwarding net connection options; force IPv4 in serverless DNS environments.
+    ...( { family: 4 } as Record<string, unknown> ),
     max: 5,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
