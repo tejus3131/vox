@@ -7,10 +7,16 @@ import { join } from "node:path";
 const REQUIRED_SCHEMA_VERSION = Number(process.env.REQUIRED_SCHEMA_VERSION ?? "1");
 const QUERY_EXECUTION_ENABLED = process.env.QUERY_EXECUTION_ENABLED !== "false";
 const AUTO_APPLY_MIGRATIONS = process.env.AUTO_APPLY_MIGRATIONS !== "false";
+const STRICT_SCHEMA_GATE = process.env.STRICT_SCHEMA_GATE === "true";
 let migrationAttemptPromise: Promise<void> | null = null;
 
 export function isQueryExecutionEnabled(): boolean {
   return QUERY_EXECUTION_ENABLED;
+}
+
+function shouldFailOpenSchemaGate(): boolean {
+  if (STRICT_SCHEMA_GATE) return false;
+  return process.env.NODE_ENV === "production";
 }
 
 async function applyBaselineMigrationsOnce() {
@@ -79,6 +85,15 @@ export async function ensureSchemaCompatibility() {
         return { ok: true as const };
       }
     } catch (migrationError) {
+      if (shouldFailOpenSchemaGate()) {
+        console.error("[schema-gate] fail-open after migration bootstrap failure", {
+          reason:
+            migrationError instanceof Error
+              ? migrationError.message
+              : "unknown_migration_error",
+        });
+        return { ok: true as const };
+      }
       return {
         ok: false,
         response: NextResponse.json(
@@ -97,6 +112,14 @@ export async function ensureSchemaCompatibility() {
       };
     }
 
+    if (shouldFailOpenSchemaGate()) {
+      console.error("[schema-gate] fail-open after metadata probe failure", {
+        appMetaError: error?.message ?? "unknown_error",
+        probeError: probe.error?.message ?? "unknown_error",
+      });
+      return { ok: true as const };
+    }
+
     return {
       ok: false,
       response: NextResponse.json(
@@ -113,6 +136,13 @@ export async function ensureSchemaCompatibility() {
   }
 
   if (Number(data.schema_version) < REQUIRED_SCHEMA_VERSION) {
+    if (shouldFailOpenSchemaGate()) {
+      console.error("[schema-gate] fail-open on version mismatch", {
+        required: REQUIRED_SCHEMA_VERSION,
+        current: Number(data.schema_version),
+      });
+      return { ok: true as const };
+    }
     return {
       ok: false,
       response: NextResponse.json(
